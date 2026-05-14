@@ -116,9 +116,26 @@ async function callGroqChat({ message, language }) {
     }
 
     return { ok: true, answer }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      return { ok: false, status: 504, message: 'Groq request timed out' }
+    }
+
+    return { ok: false, status: 502, message: error.message || 'Groq request failed' }
   } finally {
     clearTimeout(timeout)
   }
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({ ok: false, status: 504, message: 'AI request timed out' })
+      }, ms)
+    })
+  ])
 }
 
 app.post('/api/chat', async (req, res) => {
@@ -154,10 +171,13 @@ app.post('/api/chat', async (req, res) => {
       })
     }
 
-    const result = await callGroqChat({
-      message: cleanMessage,
-      language: cleanLanguage
-    })
+    const result = await withTimeout(
+      callGroqChat({
+        message: cleanMessage,
+        language: cleanLanguage
+      }),
+      CHAT_TIMEOUT_MS + 2000
+    )
 
     if (!result.ok) {
       return res.status(result.status || 502).json({
