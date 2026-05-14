@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 4000
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant'
 const CHAT_TIMEOUT_MS = 12000
+const API_VERSION = 'chat-groq-2026-05-14-2'
 const chatCache = new Map()
 
 app.use(cors())
@@ -20,7 +21,10 @@ const resend = new Resend(process.env.RESEND_API_KEY)
 app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
-    message: 'Servidor funcionando'
+    message: 'Servidor funcionando',
+    version: API_VERSION,
+    chat: true,
+    groqConfigured: Boolean(process.env.GROQ_API_KEY)
   })
 })
 
