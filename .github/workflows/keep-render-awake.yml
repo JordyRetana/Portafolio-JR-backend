@@ -25,4 +25,7 @@ jobs:
             --retry 2 \
             --retry-delay 5 \
             --max-time 20 \
-            https://portafolio-jr-backend.onrender.com/api/chat/warmup
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --data '{"message":"Responde solo: ok","language":"es"}' \
+            https://portafolio-jr-backend.onrender.com/api/chat
