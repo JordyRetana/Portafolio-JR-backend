@@ -9,7 +9,8 @@ const app = express()
 const PORT = process.env.PORT || 4000
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant'
-const CHAT_TIMEOUT_MS = 12000
+const CHAT_TIMEOUT_MS = 8000
+const CHAT_WARMUP_TIMEOUT_MS = 6000
 const API_VERSION = 'chat-groq-2026-05-14-2'
 const chatCache = new Map()
 
@@ -89,7 +90,7 @@ async function callGroqChat({ message, language }) {
       body: JSON.stringify({
         model: GROQ_MODEL,
         temperature: 0.45,
-        max_tokens: 260,
+        max_tokens: 220,
         messages: [
           {
             role: 'system',
@@ -126,6 +127,56 @@ async function callGroqChat({ message, language }) {
     }
 
     return { ok: false, status: 502, message: error.message || 'Groq request failed' }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function callGroqWarmup() {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), CHAT_WARMUP_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(GROQ_API_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        temperature: 0,
+        max_tokens: 8,
+        messages: [
+          {
+            role: 'system',
+            content: 'Reply with only: ok'
+          },
+          {
+            role: 'user',
+            content: 'ping'
+          }
+        ]
+      })
+    })
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      return {
+        ok: false,
+        status: response.status,
+        message: data?.error?.message || 'Groq warmup failed'
+      }
+    }
+
+    return { ok: true }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      return { ok: false, status: 504, message: 'Groq warmup timed out' }
+    }
+
+    return { ok: false, status: 502, message: error.message || 'Groq warmup failed' }
   } finally {
     clearTimeout(timeout)
   }
@@ -213,6 +264,39 @@ app.post('/api/chat', async (req, res) => {
       ok: false,
       fallback: true,
       message: 'No se pudo responder con IA'
+    })
+  }
+})
+
+app.get('/api/chat/warmup', async (req, res) => {
+  try {
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(503).json({
+        ok: false,
+        message: 'GROQ_API_KEY no configurada'
+      })
+    }
+
+    const result = await withTimeout(callGroqWarmup(), CHAT_WARMUP_TIMEOUT_MS + 1000)
+
+    if (!result.ok) {
+      return res.status(result.status || 502).json({
+        ok: false,
+        message: result.message
+      })
+    }
+
+    return res.json({
+      ok: true,
+      provider: 'groq',
+      warmed: true
+    })
+  } catch (error) {
+    console.error('Error en /api/chat/warmup:', error)
+
+    return res.status(500).json({
+      ok: false,
+      message: 'No se pudo calentar la IA'
     })
   }
 })
