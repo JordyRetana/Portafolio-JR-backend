@@ -13,13 +13,38 @@ const CHAT_TIMEOUT_MS = 8000
 const CHAT_WARMUP_TIMEOUT_MS = 6000
 const API_VERSION = 'chat-groq-2026-05-14-2'
 const chatCache = new Map()
+let lastGroqWarmupTime = 0
+let groqWarmupPromise = null
+const GROQ_WARMUP_COOLDOWN_MS = 4 * 60 * 1000
 
 app.use(cors())
 app.use(express.json())
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
+function warmupGroqInBackground(force = false) {
+  const now = Date.now()
+
+  if (!process.env.GROQ_API_KEY) {
+    return null
+  }
+
+  if (!force && groqWarmupPromise && now - lastGroqWarmupTime < GROQ_WARMUP_COOLDOWN_MS) {
+    return groqWarmupPromise
+  }
+
+  lastGroqWarmupTime = now
+  groqWarmupPromise = callGroqWarmup().catch((error) => {
+    console.error('Error calentando Groq:', error)
+    return { ok: false, message: error.message }
+  })
+
+  return groqWarmupPromise
+}
+
 app.get('/api/health', (req, res) => {
+  warmupGroqInBackground()
+
   res.json({
     ok: true,
     message: 'Servidor funcionando',
@@ -277,7 +302,7 @@ app.get('/api/chat/warmup', async (req, res) => {
       })
     }
 
-    const result = await withTimeout(callGroqWarmup(), CHAT_WARMUP_TIMEOUT_MS + 1000)
+    const result = await withTimeout(warmupGroqInBackground(true), CHAT_WARMUP_TIMEOUT_MS + 1000)
 
     if (!result.ok) {
       return res.status(result.status || 502).json({
@@ -361,4 +386,7 @@ app.post('/api/contact', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en el puerto ${PORT}`)
+  setTimeout(() => {
+    warmupGroqInBackground(true)
+  }, 1000)
 })
